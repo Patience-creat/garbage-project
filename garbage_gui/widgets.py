@@ -3,7 +3,7 @@
 """
 import os
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
+    QWidget, QDialog, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QFrame, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRect, QRectF, QPoint
@@ -809,19 +809,21 @@ class CirclePreview(QLabel):
 # ═══════════════════════════════════════════════════════
 # 9. 关于对话框
 # ═══════════════════════════════════════════════════════
-class AboutDialog(QWidget):
+class AboutDialog(QDialog):
     """关于对话框 — 显示项目信息、技术栈、性能指标"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("关于 智分宝")
-        self.setFixedSize(460, 380)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedSize(460, 400)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self.setModal(True)
         self.setStyleSheet(f"""
-            background: {Color.BG_SURFACE};
-            border: 1px solid {Color.BORDER};
-            border-radius: {Radius.LG}px;
+            QDialog {{
+                background: {Color.BG_SURFACE};
+                border: 1px solid {Color.BORDER};
+                border-radius: {Radius.LG}px;
+            }}
         """)
 
         self._setup_ui()
