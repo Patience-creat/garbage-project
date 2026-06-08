@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env
+
+# VS Code settings
+.vscode/
+
+# Training outputs and caches
+runs/
+**/runs/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

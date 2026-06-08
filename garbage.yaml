@@ -1,0 +1,18 @@
+# garbage.yaml
+train: D:/archive/garbage_classification/yolo_dataset/train/images
+val: D:/archive/garbage_classification/yolo_dataset/val/images
+
+nc: 12
+names:
+  0: battery
+  1: biological
+  2: brown-glass
+  3: cardboard
+  4: clothes
+  5: green-glass
+  6: metal
+  7: paper
+  8: plastic
+  9: shoes
+  10: trash
+  11: white-glass

@@ -1,0 +1,9 @@
+ultralytics>=8.4.59
+torch>=2.0.0
+torchvision
+torchaudio
+opencv-python>=4.8.0
+PyQt5>=5.15.9
+numpy
+matplotlib
+pillow
