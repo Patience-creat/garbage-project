@@ -12,7 +12,8 @@ venv/
 .vscode/
 .idea/
 
-# Training outputs and caches
+# Claude Code artifacts
+.claude/*
 runs/
 **/runs/
 
