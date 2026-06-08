@@ -38,14 +38,8 @@ class AppWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(CONFIG.WINDOW_TITLE)
         self.setWindowFlags(Qt.FramelessWindowHint)
-        # WA_TranslucentBackground 使窗口支持透明通道，圆角外部不显示黑色
-        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setAttribute(Qt.WA_StyledBackground, True)
-
-        # 抑制 UpdateLayeredWindowIndirect 告警（仅影响控制台输出）
-        import warnings
-        warnings.filterwarnings("ignore", message=".*UpdateLayeredWindowIndirect.*")
 
         # 窗口状态
         self._model = None
@@ -321,15 +315,11 @@ class AppWindow(QMainWindow):
         event.accept()
 
     def paintEvent(self, event):
-        """绘制窗口圆角背景（WA_TranslucentBackground 下外部透明）"""
-        from PyQt5.QtGui import QPainter, QPainterPath
+        """填充窗口背景，防止拖拽时出现黑色残留"""
+        from PyQt5.QtGui import QPainter
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        # 只填充圆角矩形内区域，外部透明
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, self.width(), self.height(), Radius.XL, Radius.XL)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(Color.BG_DARK))
-        painter.drawPath(path)
+        painter.drawRect(self.rect())
         painter.end()
         super().paintEvent(event)
