@@ -2,13 +2,15 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
 # Virtual environments
 venv/
 .env
 
-# VS Code settings
+# IDE
 .vscode/
+.idea/
 
 # Training outputs and caches
 runs/
@@ -16,6 +18,24 @@ runs/
 
 # Logs
 *.log
+logs/
 
-# macOS
+# Detection records
+records/
+
+# Output directory
+output/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Keep base model and best weights
+!yolov8n.pt
+!runs/detect/train-3/weights/best.pt

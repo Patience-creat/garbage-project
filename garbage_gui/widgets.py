@@ -1,6 +1,7 @@
 """
 自定义控件模块 — 标题栏、侧边栏、统计卡片、按钮等
 """
+import os
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QFrame, QSizePolicy
@@ -23,6 +24,7 @@ class TitleBar(QWidget):
     window_maximized = pyqtSignal()
     window_closed = pyqtSignal()
     window_restored = pyqtSignal()
+    about_requested = pyqtSignal()
 
     def __init__(self, parent, title="智分宝"):
         super().__init__(parent)
@@ -62,6 +64,9 @@ class TitleBar(QWidget):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         # 窗口控制按钮
+        self.btn_about = TitleBarButton("ℹ️", self)
+        self.btn_about.setToolTip("关于 (F1)")
+        self.btn_about.clicked.connect(self._on_about)
         self.btn_minimize = TitleBarButton("─", self)
         self.btn_minimize.clicked.connect(self._on_minimize)
         self.btn_maximize = TitleBarButton("□", self)
@@ -74,6 +79,7 @@ class TitleBar(QWidget):
         layout.addSpacing(8)
         layout.addWidget(self.title_label)
         layout.addWidget(spacer, 1)
+        layout.addWidget(self.btn_about)
         layout.addWidget(self.btn_minimize)
         layout.addWidget(self.btn_maximize)
         layout.addWidget(self.btn_close)
@@ -105,6 +111,9 @@ class TitleBar(QWidget):
 
     def _on_close(self):
         self.window_closed.emit()
+
+    def _on_about(self):
+        self.about_requested.emit()
 
     # ── 窗口拖动 ──
     def mousePressEvent(self, event):
@@ -795,3 +804,119 @@ class CirclePreview(QLabel):
         if self._pixmap:
             self.setPixmap(self._pixmap.scaled(
                 self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+
+# ═══════════════════════════════════════════════════════
+# 9. 关于对话框
+# ═══════════════════════════════════════════════════════
+class AboutDialog(QWidget):
+    """关于对话框 — 显示项目信息、技术栈、性能指标"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("关于 智分宝")
+        self.setFixedSize(460, 380)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            background: {Color.BG_SURFACE};
+            border: 1px solid {Color.BORDER};
+            border-radius: {Radius.LG}px;
+        """)
+
+        self._setup_ui()
+        self._center_on_parent(parent)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(6)
+
+        # 标题区
+        title = QLabel("♻️ 智分宝")
+        title_font = QFont("Microsoft YaHei UI", 20, QFont.Bold)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: white; background: transparent;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("智能垃圾分类检测系统")
+        subtitle_font = QFont("Microsoft YaHei UI", 12)
+        subtitle.setFont(subtitle_font)
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet(f"color: {Color.TEXT_SECONDARY}; background: transparent;")
+        layout.addWidget(subtitle)
+
+        # 分隔线
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background: {Color.BORDER};")
+        layout.addWidget(line)
+        layout.addSpacing(8)
+
+        # 信息表
+        from .config import CONFIG
+        info_items = [
+            ("版本", CONFIG.APP_VERSION),
+            ("技术栈", "YOLOv8 + PyTorch + OpenCV + PyQt5"),
+            ("模型", f"YOLOv8-Nano ({os.path.getsize(CONFIG.MODEL_PATH)//1024//1024}MB)" if os.path.exists(CONFIG.MODEL_PATH) else "YOLOv8-Nano"),
+            ("检测类别", "12 类生活垃圾"),
+            ("运行模式", "CPU / CUDA"),
+            ("mAP@50", "95.1%"),
+            ("项目地址", "GitHub: Patience-creat/garbage-project"),
+        ]
+
+        for label, value in info_items:
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 4, 0, 4)
+            row_layout.setSpacing(12)
+
+            lbl = QLabel(label)
+            lbl.setFixedWidth(80)
+            lbl_font = QFont("Microsoft YaHei UI", 11)
+            lbl.setFont(lbl_font)
+            lbl.setStyleSheet(f"color: {Color.TEXT_MUTED}; background: transparent;")
+
+            val = QLabel(value)
+            val_font = QFont("Microsoft YaHei UI", 11)
+            val.setFont(val_font)
+            val.setStyleSheet("color: white; background: transparent;")
+            val.setWordWrap(True)
+
+            row_layout.addWidget(lbl)
+            row_layout.addWidget(val, 1)
+            layout.addWidget(row)
+
+        layout.addStretch()
+
+        # 关闭按钮
+        btn_close = QPushButton("知道了")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setFixedHeight(38)
+        btn_close.setStyleSheet(f"""
+            QPushButton {{
+                background: {Color.PRIMARY};
+                color: white;
+                border: none;
+                border-radius: {Radius.MD}px;
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: {Color.PRIMARY_HOVER};
+            }}
+        """)
+        btn_close.clicked.connect(self.close)
+        layout.addWidget(btn_close)
+
+    def _center_on_parent(self, parent):
+        if parent:
+            center = parent.frameGeometry().center()
+            self.move(center.x() - self.width() // 2,
+                      center.y() - self.height() // 2)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()

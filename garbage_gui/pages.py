@@ -1,12 +1,16 @@
 """
 应用页面 — 仪表盘、智能检测、检测记录
 """
+import os
+import json
 import cv2
+from datetime import datetime
 from collections import Counter
 
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QFrame, QScrollArea, QFileDialog, QSizePolicy, QSlider
+    QGridLayout, QFrame, QScrollArea, QFileDialog, QSizePolicy, QSlider,
+    QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QPixmap, QImage
@@ -14,6 +18,8 @@ from PyQt5.QtGui import QFont, QPixmap, QImage
 from .theme import Color, Radius
 from .widgets import StatCard, GlowButton, StatusIndicator, DetectionResultPanel
 from .worker import DetectionWorker
+from .logger import logger
+from .config import CONFIG
 
 
 # ═══════════════════════════════════════════════════════
@@ -229,6 +235,7 @@ class DetectionPage(QWidget):
         self._total_confidence = 0.0
         self._class_counter = Counter()
         self._current_image = None
+        self._annotated_frame = None
 
         self._setup_ui()
         self._connect_signals()
@@ -308,9 +315,13 @@ class DetectionPage(QWidget):
         controls_layout.setSpacing(10)
 
         self.btn_camera = GlowButton("  开启摄像头", "📷")
+        self.btn_camera.setToolTip("打开摄像头进行实时检测 (Ctrl+C)")
         self.btn_image = GlowButton("  上传图片", "🖼️", primary=False)
+        self.btn_image.setToolTip("上传单张图片进行检测 (Ctrl+O)")
         self.btn_stop = GlowButton("  停止检测", "⏹️", primary=False)
+        self.btn_stop.setToolTip("停止当前检测 (F5)")
         self.btn_save = GlowButton("  保存结果", "💾", primary=False)
+        self.btn_save.setToolTip("保存当前检测画面 (Ctrl+S)")
 
         controls_layout.addWidget(self.btn_camera)
         controls_layout.addWidget(self.btn_image)
@@ -463,6 +474,20 @@ class DetectionPage(QWidget):
         self.status_indicator.update_state("idle")
 
     def _on_save(self):
+        # 优先保存完整标注帧
+        if self._annotated_frame is not None:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存检测结果", "detection_result.jpg",
+                "JPEG (*.jpg);;PNG (*.png)"
+            )
+            if path:
+                try:
+                    cv2.imwrite(path, self._annotated_frame)
+                    logger.info(f"检测结果已保存 → {path}")
+                except Exception as e:
+                    logger.error(f"保存失败: {e}")
+            return
+        # 回退：保存预览区截图
         if self._current_image is None:
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -471,11 +496,11 @@ class DetectionPage(QWidget):
         )
         if path and self._current_image is not None:
             try:
-                # Convert QPixmap to QImage to save
                 if isinstance(self._current_image, QPixmap):
                     self._current_image.save(path)
+                    logger.info(f"检测截图已保存 → {path}")
             except Exception as e:
-                print(f"保存失败: {e}")
+                logger.error(f"保存失败: {e}")
 
     # ── 线程管理 ──
 
@@ -542,6 +567,7 @@ class DetectionPage(QWidget):
         )
         self.preview_label.setPixmap(scaled)
         self._current_image = scaled
+        self._annotated_frame = frame  # 用于保存完整标注图
 
         # 更新检测结果
         self.result_panel.update_results(detections)
@@ -575,7 +601,7 @@ class DetectionPage(QWidget):
         self.fps_label.adjustSize()
 
     def _on_status(self, msg):
-        print(f"[Worker] {msg}")
+        logger.info(f"[Worker] {msg}")
 
     def _on_error(self, msg):
         self.status_indicator.update_state("error")
@@ -603,13 +629,15 @@ class DetectionPage(QWidget):
 # 3. 检测记录页面
 # ═══════════════════════════════════════════════════════
 class HistoryPage(QWidget):
-    """检测记录页面"""
+    """检测记录页面（支持持久化保存/加载）"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("historyPage")
         self._records = []
+        self._records_file = os.path.join(CONFIG.RECORDS_DIR, "detection_records.json")
         self._setup_ui()
+        self.load_records()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -635,6 +663,7 @@ class HistoryPage(QWidget):
         title.setStyleSheet("color: white; background: transparent;")
 
         self.btn_clear = QPushButton("🗑️ 清空记录")
+        self.btn_clear.setToolTip("清空所有检测记录")
         self.btn_clear.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -651,8 +680,27 @@ class HistoryPage(QWidget):
         """)
         self.btn_clear.clicked.connect(self._clear_records)
 
+        self.btn_export = QPushButton("📤 导出")
+        self.btn_export.setToolTip("导出检测记录为 CSV")
+        self.btn_export.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Color.TEXT_SECONDARY};
+                border: 1px solid {Color.BORDER};
+                border-radius: {Radius.MD}px;
+                padding: 8px 16px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {Color.PRIMARY};
+                color: {Color.PRIMARY_LIGHT};
+            }}
+        """)
+        self.btn_export.clicked.connect(self.export_records_csv)
+
         toolbar_layout.addWidget(title)
         toolbar_layout.addStretch()
+        toolbar_layout.addWidget(self.btn_export)
         toolbar_layout.addWidget(self.btn_clear)
         main_layout.addWidget(toolbar)
 
@@ -788,8 +836,73 @@ class HistoryPage(QWidget):
 
         return card
 
+    def save_records(self):
+        """持久化保存检测记录到 JSON 文件"""
+        try:
+            os.makedirs(CONFIG.RECORDS_DIR, exist_ok=True)
+            with open(self._records_file, "w", encoding="utf-8") as f:
+                json.dump(self._records, f, ensure_ascii=False, indent=2)
+            logger.info(f"检测记录已保存 ({len(self._records)} 条) → {self._records_file}")
+        except Exception as e:
+            logger.error(f"保存检测记录失败: {e}")
+
+    def load_records(self):
+        """从 JSON 文件加载检测记录"""
+        if not os.path.exists(self._records_file):
+            return
+        try:
+            with open(self._records_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if not isinstance(loaded, list):
+                return
+            self._records = loaded
+            # 重建卡片
+            for record in self._records:
+                self._empty_state.hide()
+                card = self._create_record_card(record)
+                self._records_layout.insertWidget(0, card)
+            logger.info(f"检测记录已加载 ({len(self._records)} 条)")
+        except Exception as e:
+            logger.error(f"加载检测记录失败: {e}")
+
+    def export_records_csv(self):
+        """导出记录为 CSV 文件"""
+        if not self._records:
+            QMessageBox.information(self, "提示", "没有检测记录可导出")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出检测记录", f"detection_records_{datetime.now():%Y%m%d_%H%M%S}.csv",
+            "CSV (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig") as f:
+                f.write("时间,类别,置信度\n")
+                for r in self._records:
+                    ts = r.get("time", "")
+                    for cls_name, conf in r.get("detections", []):
+                        cn = Color.CLASS_NAMES_CN.get(cls_name, cls_name)
+                        f.write(f"{ts},{cn},{conf:.2%}\n")
+            logger.info(f"检测记录已导出 → {path}")
+            QMessageBox.information(self, "导出成功", f"已导出到:\n{path}")
+        except Exception as e:
+            logger.error(f"导出失败: {e}")
+            QMessageBox.warning(self, "导出失败", str(e))
+
     def _clear_records(self):
-        """清空所有记录"""
+        """清空所有记录（带确认）"""
+        if not self._records:
+            return
+        reply = QMessageBox.question(
+            self, "确认清空",
+            f"确定要清空全部 {len(self._records)} 条检测记录吗？\n此操作不可恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
         self._records.clear()
         # 清除所有卡片（保留 _empty_state）
         while self._records_layout.count():
@@ -799,3 +912,4 @@ class HistoryPage(QWidget):
                 w.deleteLater()
         # 显示空状态
         self._empty_state.show()
+        logger.info("检测记录已清空")
