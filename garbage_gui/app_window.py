@@ -39,7 +39,7 @@ class AppWindow(QMainWindow):
         self.setWindowTitle(CONFIG.WINDOW_TITLE)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
         # 窗口状态
         self._model = None
@@ -315,7 +315,11 @@ class AppWindow(QMainWindow):
         event.accept()
 
     def paintEvent(self, event):
-        if not self._page_loaded:
-            super().paintEvent(event)
-            return
+        """填充窗口背景，防止拖拽时出现黑色残留"""
+        from PyQt5.QtGui import QPainter
+        painter = QPainter(self)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(Color.BG_DARK))
+        painter.drawRect(self.rect())
+        painter.end()
         super().paintEvent(event)
