@@ -7,11 +7,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QStackedWidget, QFrame, QGraphicsDropShadowEffect, QLabel,
+    QStackedWidget, QFrame, QLabel,
     QDesktopWidget, QMessageBox, QStatusBar,
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QKeySequence, QFont
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QPainter, QPainterPath
 
 from .theme import Color, Radius, GLOBAL_STYLESHEET, setup_fonts
 from .widgets import TitleBar, Sidebar, AboutDialog
@@ -263,16 +263,8 @@ class AppWindow(QMainWindow):
         self.status_bar.showMessage("就绪 | Ctrl+O 打开图片  F5 开始检测  F1 关于")
         main_layout.addWidget(self.status_bar)
 
+        # 容器边框绘制在 paintEvent 中完成
         self.setCentralWidget(container)
-        self._apply_shadow()
-
-    def _apply_shadow(self):
-        """窗口阴影"""
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(40)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        shadow.setOffset(0, 4)
-        self.centralWidget().setGraphicsEffect(shadow)
 
     def _apply_global_style(self):
         self.setStyleSheet(GLOBAL_STYLESHEET)
@@ -321,15 +313,24 @@ class AppWindow(QMainWindow):
         event.accept()
 
     def paintEvent(self, event):
-        """绘制窗口圆角背景（WA_TranslucentBackground 下外部透明）"""
-        from PyQt5.QtGui import QPainter, QPainterPath
+        """绘制窗口圆角背景 + 细边框（外部透明）"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        # 只填充圆角矩形内区域，外部透明
+        rect = self.rect()
+
+        # 圆角裁剪路径
         path = QPainterPath()
-        path.addRoundedRect(0, 0, self.width(), self.height(), Radius.XL, Radius.XL)
+        path.addRoundedRect(0, 0, rect.width(), rect.height(), Radius.XL, Radius.XL)
+
+        # 填充背景
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(Color.BG_DARK))
         painter.drawPath(path)
+
+        # 细边框（仿窗口阴影效果）
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QColor(Color.BORDER))
+        painter.drawPath(path)
+
         painter.end()
         super().paintEvent(event)
