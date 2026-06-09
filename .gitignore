@@ -14,8 +14,14 @@ venv/
 
 # Claude Code artifacts
 .claude/*
+
+# Model training outputs (use models/ for distributed weights)
 runs/
 **/runs/
+
+# Distributed model weights (tracked in Git — small enough for direct storage)
+models/*
+!models/best.pt
 
 # Logs
 *.log
@@ -37,6 +43,5 @@ output/
 .DS_Store
 Thumbs.db
 
-# Keep base model and best weights
+# Keep base model
 !yolov8n.pt
-!runs/detect/train-3/weights/best.pt
