@@ -3,7 +3,6 @@
 """
 import cv2
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -11,12 +10,12 @@ from PyQt5.QtWidgets import (
     QDesktopWidget, QMessageBox, QStatusBar,
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QKeySequence, QFont, QPainter, QPainterPath
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QPainter, QPainterPath, QRegion
 
 from .theme import Color, Radius, GLOBAL_STYLESHEET, setup_fonts
 from .widgets import TitleBar, Sidebar, AboutDialog
 from .pages import DashboardPage, DetectionPage, HistoryPage
-from .config import CONFIG
+from .config import CONFIG, auto_device, device_display_name
 from .logger import logger
 
 # 模型加载
@@ -38,14 +37,11 @@ class AppWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(CONFIG.WINDOW_TITLE)
         self.setWindowFlags(Qt.FramelessWindowHint)
-        # WA_TranslucentBackground 使窗口支持透明通道，圆角外部不显示黑色
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # 不启用 WA_TranslucentBackground — 改用 setMask 裁剪窗口形状。
+        # 分层窗口（WS_EX_LAYERED）在 Windows 拖拽时来不及合成，会回退黑色背景。
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setAttribute(Qt.WA_StyledBackground, True)
-
-        # 抑制 UpdateLayeredWindowIndirect 告警（仅影响控制台输出）
-        import warnings
-        warnings.filterwarnings("ignore", message=".*UpdateLayeredWindowIndirect.*")
 
         # 窗口状态
         self._model = None
@@ -169,17 +165,20 @@ class AppWindow(QMainWindow):
         self._splash.deleteLater()
         self._splash = None
         self._page_loaded = True
+        # 确保窗口形状裁剪（窗口此时已完全创建）
+        self._update_window_mask()
         logger.info("🎯 智分宝启动完成")
 
     def _load_model(self):
-        """加载YOLO模型（CPU模式）"""
+        """加载YOLO模型（自动选择设备：CUDA → MPS → CPU）"""
         if not os.path.exists(CONFIG.MODEL_PATH):
             logger.warning(f"模型文件未找到: {CONFIG.MODEL_PATH}")
             self._model = None
             return
         try:
+            device = auto_device()
             self._model = YOLO(CONFIG.MODEL_PATH)
-            logger.info("✅ 自定义垃圾模型加载成功（CPU模式）")
+            logger.info(f"✅ 自定义垃圾模型加载成功（{device_display_name(device)}）")
         except Exception as e:
             logger.error(f"模型加载失败: {e}")
             self._model = None
@@ -301,6 +300,22 @@ class AppWindow(QMainWindow):
             self.setGeometry(self._normal_rect)
             self._normal_rect = None
 
+    # ── 窗口裁剪 ──
+
+    def _update_window_mask(self):
+        """用圆角路径裁剪窗口本身，替代 WA_TranslucentBackground"""
+        path = QPainterPath()
+        path.addRoundedRect(
+            0, 0, self.width(), self.height(),
+            Radius.XL, Radius.XL,
+        )
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def resizeEvent(self, event):
+        """窗口大小变化时重新裁剪窗口形状"""
+        super().resizeEvent(event)
+        self._update_window_mask()
+
     # ── 关闭事件 ──
 
     def closeEvent(self, event):
@@ -313,24 +328,24 @@ class AppWindow(QMainWindow):
         event.accept()
 
     def paintEvent(self, event):
-        """绘制窗口圆角背景 + 细边框（外部透明）"""
+        """绘制窗口圆角背景 + 细边框（窗口形状由 setMask 裁剪）"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect()
 
-        # 圆角裁剪路径
+        # 圆角路径（必须与 _update_window_mask 使用的半径完全一致）
+        radius = Radius.XL
         path = QPainterPath()
-        path.addRoundedRect(0, 0, rect.width(), rect.height(), Radius.XL, Radius.XL)
+        path.addRoundedRect(0, 0, rect.width(), rect.height(), radius, radius)
 
         # 填充背景
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(Color.BG_DARK))
         painter.drawPath(path)
 
-        # 细边框（仿窗口阴影效果）
+        # 细边框
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QColor(Color.BORDER))
         painter.drawPath(path)
 
         painter.end()
-        super().paintEvent(event)

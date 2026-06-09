@@ -4,6 +4,7 @@
 import time
 import cv2
 from PyQt5.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker
+from .config import auto_device
 
 
 class DetectionWorker(QObject):
@@ -34,7 +35,7 @@ class DetectionWorker(QObject):
         self._video_path = None
         self._frame = None
         self._conf_threshold = 0.3
-        self._device = "cpu"      # 强制 CPU，与模型加载一致
+        self._device = auto_device()  # 自动选择：CUDA → MPS → CPU
         self._camera_id = 0
 
     # ── 属性设置 ──
