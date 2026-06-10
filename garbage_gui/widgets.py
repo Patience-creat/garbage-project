@@ -119,12 +119,14 @@ class TitleBar(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._is_dragging = True
-            self._drag_pos = event.globalPos() - self.parent.frameGeometry().topLeft()
+            win = self.window()
+            self._drag_pos = event.globalPos() - win.frameGeometry().topLeft()
+            self.grabMouse()
             event.accept()
 
     def mouseMoveEvent(self, event):
         if self._is_dragging and event.buttons() == Qt.LeftButton:
-            self.parent.move(event.globalPos() - self._drag_pos)
+            self.window().move(event.globalPos() - self._drag_pos)
             if self._is_maximized:
                 self._is_maximized = False
                 self.btn_maximize.setText("□")
@@ -133,6 +135,8 @@ class TitleBar(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._is_dragging = False
+        if self.mouseGrabber() is self:
+            self.releaseMouse()
         event.accept()
 
     def mouseDoubleClickEvent(self, event):
