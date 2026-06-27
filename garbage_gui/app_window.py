@@ -15,11 +15,9 @@ from PyQt5.QtGui import QColor, QKeySequence, QFont, QPainter, QPainterPath, QRe
 from .theme import Color, Radius, GLOBAL_STYLESHEET, setup_fonts
 from .widgets import TitleBar, Sidebar, AboutDialog
 from .pages import DashboardPage, DetectionPage, HistoryPage
+from .review_pages import HistoryReviewPage, ExpertReviewPage
 from .config import CONFIG, auto_device, device_display_name
 from .logger import logger
-
-# 模型加载
-from ultralytics import YOLO
 
 # ─── 用于平滑启动的闪屏 ────────────────────────────────
 SPLASH_MESSAGE = """<div style='text-align:center;'>
@@ -47,7 +45,13 @@ class AppWindow(QMainWindow):
         self._model = None
         self._page_loaded = False
         self._normal_rect = None
+
+        # 累计统计数据（跨多次图片上传累积）
         self._cum_total = 0
+        self._cum_categories = set()
+        self._cum_confidence_sum = 0.0
+        self._cum_confidence_count = 0
+        self._cum_fps = 0.0
 
         # 设置窗口大小
         self.resize(CONFIG.WINDOW_WIDTH, CONFIG.WINDOW_HEIGHT)
@@ -157,31 +161,44 @@ class AppWindow(QMainWindow):
     # ── 初始化 ──
 
     def _init_app(self):
-        """初始化应用组件"""
-        self._load_model()
+        """初始化应用组件（先构建 UI，再后台加载模型 → 大幅提升启动速度）"""
+        # 1. 先构建 UI（很快，毫秒级）
         self._build_ui()
         self._apply_global_style()
+        self._page_loaded = True
+        self._update_window_mask()
+
+        # 2. 隐藏闪屏，让用户立即看到界面
         self._splash.hide()
         self._splash.deleteLater()
         self._splash = None
-        self._page_loaded = True
-        # 确保窗口形状裁剪（窗口此时已完全创建）
-        self._update_window_mask()
-        logger.info("🎯 智分宝启动完成")
+
+        # 3. 延迟加载模型（不阻塞 UI 绘制）
+        QTimer.singleShot(0, self._load_model)
+        logger.info("🎯 智分宝启动完成（模型后台加载中...）")
 
     def _load_model(self):
-        """加载YOLO模型（自动选择设备：CUDA → MPS → CPU）"""
+        """加载YOLO模型（延迟导入 + 后台加载，不阻塞UI）"""
         if not os.path.exists(CONFIG.MODEL_PATH):
             logger.warning(f"模型文件未找到: {CONFIG.MODEL_PATH}")
             self._model = None
+            self.page_detection.update_model(None)
+            self.status_bar.showMessage("⚠ 模型文件未找到")
             return
         try:
+            from ultralytics import YOLO  # 延迟导入，加速模块加载
+            self.status_bar.showMessage("🔄 正在加载模型...")
+            self.status_bar.repaint()
             device = auto_device()
             self._model = YOLO(CONFIG.MODEL_PATH)
+            self.page_detection.update_model(self._model)
+            self.status_bar.showMessage(f"✓ 模型已加载（{device_display_name(device)}）| 就绪")
             logger.info(f"✅ 自定义垃圾模型加载成功（{device_display_name(device)}）")
         except Exception as e:
             logger.error(f"模型加载失败: {e}")
             self._model = None
+            self.page_detection.update_model(None)
+            self.status_bar.showMessage("⚠ 模型加载失败")
 
     def _build_ui(self):
         """构建完整 UI"""
@@ -233,15 +250,22 @@ class AppWindow(QMainWindow):
         self.page_dashboard = DashboardPage()
         self.page_detection = DetectionPage(self._model)
         self.page_history = HistoryPage()
+        self.page_history_review = HistoryReviewPage()
+        self.page_expert_review = ExpertReviewPage()
 
-        self.pages.addWidget(self.page_dashboard)
-        self.pages.addWidget(self.page_detection)
-        self.pages.addWidget(self.page_history)
+        self.pages.addWidget(self.page_dashboard)      # index 0
+        self.pages.addWidget(self.page_detection)      # index 1
+        self.pages.addWidget(self.page_history)        # index 2
+        self.pages.addWidget(self.page_history_review)  # index 3
+        self.pages.addWidget(self.page_expert_review)   # index 4
 
         self.page_dashboard.navigate_requested.connect(self._on_dashboard_nav)
         self.page_detection.detection_made.connect(self._on_detection_made)
         self.page_detection.results_ready.connect(self.add_detection_record)
-        self.page_detection.detection_started.connect(self.reset_stats)
+        self.page_dashboard.refresh_requested.connect(self._update_dashboard)
+        self.page_detection.detection_started.connect(self._on_detection_started)
+        self.page_history_review.navigate_requested.connect(self._on_dashboard_nav)
+        self.page_expert_review.review_completed.connect(self._on_review_completed)
 
         body_layout.addWidget(self.pages, 1)
         main_layout.addWidget(body, 1)
@@ -278,15 +302,50 @@ class AppWindow(QMainWindow):
         self.sidebar.set_active(page_index)
         self.pages.setCurrentIndex(page_index)
 
-    def _on_detection_made(self, total, categories, avg_conf, fps):
-        self._cum_total += total
-        self.page_dashboard.update_stats(self._cum_total, categories, avg_conf, fps)
+    def _on_detection_made(self, detections, fps):
+        """收到检测结果 — 累积所有统计并更新仪表盘"""
+        # 累积总检测数
+        self._cum_total += len(detections)
+        # 累积类别和置信度
+        for cls_name, conf in detections:
+            self._cum_categories.add(cls_name)
+            self._cum_confidence_sum += conf
+        self._cum_confidence_count += len(detections)
+        # 记录处理速度（取最新值）
+        self._cum_fps = fps if fps > 0 else self._cum_fps
+
+        self._update_dashboard()
+
+    def _update_dashboard(self):
+        """将当前累积统计推送到仪表盘"""
+        avg_conf = (self._cum_confidence_sum / max(self._cum_confidence_count, 1)) * 100
+        self.page_dashboard.update_stats(
+            self._cum_total,
+            len(self._cum_categories),
+            avg_conf,
+            self._cum_fps,
+        )
+
+    def _on_detection_started(self, mode):
+        """检测会话开始 — 摄像头模式清零累积统计，图片模式继续累积"""
+        if mode == "camera":
+            self.reset_cumulative_stats()
 
     def add_detection_record(self, detections):
         self.page_history.add_record(detections)
 
-    def reset_stats(self):
+    def _on_review_completed(self, score, total):
+        """专家评审完成后的处理"""
+        logger.info(f"🏆 专家评审完成: {score}/{total}")
+
+    def reset_cumulative_stats(self):
+        """重置累积统计（用于开始新会话）"""
         self._cum_total = 0
+        self._cum_categories.clear()
+        self._cum_confidence_sum = 0.0
+        self._cum_confidence_count = 0
+        self._cum_fps = 0.0
+        self._update_dashboard()
 
     # ── 窗口控制 ──
 
@@ -324,6 +383,8 @@ class AppWindow(QMainWindow):
             self.page_detection._stop_detection()
         if hasattr(self, 'page_history'):
             self.page_history.save_records()
+        if hasattr(self, 'page_history_review'):
+            self.page_history_review.save_meta()
         logger.info("程序已退出")
         event.accept()
 

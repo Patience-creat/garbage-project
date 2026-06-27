@@ -29,6 +29,7 @@ class DashboardPage(QWidget):
     """首页仪表盘 — 统计概览 + 快速操作"""
 
     navigate_requested = pyqtSignal(int)
+    refresh_requested = pyqtSignal()  # 手动刷新统计
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,6 +54,9 @@ class DashboardPage(QWidget):
 
         # ── 统计卡片 ──
         self._add_stat_cards(layout)
+
+        # ── 刷新按钮行 ──
+        self._add_refresh_row(layout)
 
         # ── 快速操作 ──
         self._add_quick_actions(layout)
@@ -129,6 +133,88 @@ class DashboardPage(QWidget):
         cards_layout.addWidget(self.card_fps, 1, 1)
 
         parent_layout.addLayout(cards_layout)
+
+    def _add_refresh_row(self, parent_layout):
+        """手动刷新统计按钮行"""
+        refresh_row = QHBoxLayout()
+        refresh_row.setSpacing(12)
+
+        # 刷新按钮
+        self.btn_refresh = QPushButton("  🔄 刷新统计")
+        self.btn_refresh.setToolTip("刷新仪表盘，显示最新的累计统计")
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setFixedHeight(36)
+        self.btn_refresh.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Color.PRIMARY_LIGHT};
+                border: 1px solid {Color.PRIMARY};
+                border-radius: {Radius.MD}px;
+                padding: 6px 18px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: rgba(99,102,241,0.15);
+                border-color: {Color.PRIMARY_LIGHT};
+            }}
+            QPushButton:pressed {{
+                background: rgba(99,102,241,0.25);
+            }}
+        """)
+        self.btn_refresh.clicked.connect(self.refresh_requested.emit)
+
+        # 重置按钮（清空累计统计，重新开始）
+        self.btn_reset = QPushButton("  🗑️ 重置统计")
+        self.btn_reset.setToolTip("清零所有累计数据，重新开始统计")
+        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.setFixedHeight(36)
+        self.btn_reset.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Color.WARNING};
+                border: 1px solid rgba(245,158,11,0.4);
+                border-radius: {Radius.MD}px;
+                padding: 6px 18px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: rgba(245,158,11,0.15);
+                border-color: {Color.WARNING};
+            }}
+            QPushButton:pressed {{
+                background: rgba(245,158,11,0.25);
+            }}
+        """)
+        self.btn_reset.clicked.connect(self._on_reset_stats)
+
+        # 统计说明文字
+        hint = QLabel("💡 多次上传图片识别的结果会自动累积，点击刷新查看最新汇总")
+        hint.setStyleSheet(f"color: {Color.TEXT_MUTED}; background: transparent; font-size: 11px;")
+
+        refresh_row.addWidget(self.btn_refresh)
+        refresh_row.addWidget(self.btn_reset)
+        refresh_row.addWidget(hint)
+        refresh_row.addStretch()
+        parent_layout.addLayout(refresh_row)
+
+    def _on_reset_stats(self):
+        """重置统计 — 委托给 AppWindow"""
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "确认重置",
+            "确定要重置所有累计统计数据吗？\n检测记录不会被删除。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            # 通过主窗口重置（向上查找 AppWindow）
+            parent = self.parent()
+            while parent and not hasattr(parent, 'reset_cumulative_stats'):
+                parent = parent.parent()
+            if parent and hasattr(parent, 'reset_cumulative_stats'):
+                parent.reset_cumulative_stats()
 
     def _add_quick_actions(self, parent_layout):
         """快捷操作区"""
@@ -215,9 +301,9 @@ class DetectionPage(QWidget):
     """智能检测页面 — 摄像头/图片/视频检测"""
 
     # 信号
-    detection_made = pyqtSignal(int, int, float, float)  # total, categories, avg_conf, fps
+    detection_made = pyqtSignal(list, float)  # (detections: list of (class_name, conf), fps)
     results_ready = pyqtSignal(list)  # detections list for history
-    detection_started = pyqtSignal()  # new detection session started
+    detection_started = pyqtSignal(str)  # mode: "camera" | "image"
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -236,6 +322,7 @@ class DetectionPage(QWidget):
         self._class_counter = Counter()
         self._current_image = None
         self._annotated_frame = None
+        self._last_detections = []  # 最近一次检测结果(用于存档)
 
         self._setup_ui()
         self._connect_signals()
@@ -384,12 +471,12 @@ class DetectionPage(QWidget):
         conf_label.setFont(conf_label_font)
 
         self.conf_slider = QSlider(Qt.Horizontal)
-        self.conf_slider.setRange(10, 90)
-        self.conf_slider.setValue(30)
+        self.conf_slider.setRange(5, 90)
+        self.conf_slider.setValue(20)
         self.conf_slider.setFixedWidth(120)
         self.conf_slider.setObjectName("confSlider")
 
-        self.conf_value_label = QLabel("0.30")
+        self.conf_value_label = QLabel("0.20")
         self.conf_value_label.setFixedWidth(40)
         self.conf_value_label.setStyleSheet(f"color: {Color.PRIMARY}; background: transparent; font-weight: bold;")
 
@@ -474,16 +561,20 @@ class DetectionPage(QWidget):
         self.status_indicator.update_state("idle")
 
     def _on_save(self):
+        """保存检测结果"""
+        default_name = f"detection_result_{datetime.now():%Y%m%d_%H%M%S}.jpg"
+
         # 优先保存完整标注帧
         if self._annotated_frame is not None:
             path, _ = QFileDialog.getSaveFileName(
-                self, "保存检测结果", "detection_result.jpg",
+                self, "保存检测结果", default_name,
                 "JPEG (*.jpg);;PNG (*.png)"
             )
             if path:
                 try:
                     cv2.imwrite(path, self._annotated_frame)
                     logger.info(f"检测结果已保存 → {path}")
+                    self._save_to_archive(path, self._annotated_frame)
                 except Exception as e:
                     logger.error(f"保存失败: {e}")
             return
@@ -491,7 +582,7 @@ class DetectionPage(QWidget):
         if self._current_image is None:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "保存检测结果", "detection_result.jpg",
+            self, "保存检测结果", default_name,
             "JPEG (*.jpg);;PNG (*.png)"
         )
         if path and self._current_image is not None:
@@ -502,11 +593,44 @@ class DetectionPage(QWidget):
             except Exception as e:
                 logger.error(f"保存失败: {e}")
 
+    def _save_to_archive(self, filepath, frame):
+        """保存时同步加入存档（供专家评审使用）"""
+        import shutil
+        try:
+            archive_dir = CONFIG.IMAGES_ARCHIVE_DIR
+            os.makedirs(archive_dir, exist_ok=True)
+            filename = os.path.basename(filepath)
+            shutil.copy2(filepath, os.path.join(archive_dir, filename))
+            dets = self._last_detections[:] if self._last_detections else []
+            meta_file = os.path.join(CONFIG.RECORDS_DIR, "images_meta.json")
+            meta = []
+            if os.path.exists(meta_file):
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            meta.insert(0, {
+                "filename": filename,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "detections": dets,
+                "total": len(dets),
+                "categories": list(dict.fromkeys(c for c, _ in dets)),
+            })
+            while len(meta) > CONFIG.MAX_ARCHIVE_IMAGES:
+                removed = meta.pop()
+                old = os.path.join(archive_dir, removed["filename"])
+                if os.path.exists(old): os.remove(old)
+            with open(meta_file, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"写入存档失败: {e}")
+
     # ── 线程管理 ──
 
     def _start_detection(self, mode, path=None):
         if self.model is None:
             self.status_indicator.update_state("error")
+            self.status_indicator.text_label.setText("模型加载中...")
+            self.preview_label.setText("⏳ 模型正在后台加载，请稍候再试")
+            self.preview_label.setAlignment(Qt.AlignCenter)
             return
 
         # 创建工作线程
@@ -538,7 +662,7 @@ class DetectionPage(QWidget):
             self._worker.start_image(path)
 
         self._worker_thread.start()
-        self.detection_started.emit()
+        self.detection_started.emit(mode)
         self.status_indicator.update_state("running")
 
     def _stop_detection(self):
@@ -572,27 +696,30 @@ class DetectionPage(QWidget):
         # 更新检测结果
         self.result_panel.update_results(detections)
 
-        # 统计
+        # 本次检测统计（显示在当前页面的统计摘要中）
         self._detection_count += len(detections)
         for cls_name, conf in detections:
             self._class_counter[cls_name] += 1
             self._total_confidence += conf
+        self._last_detections = detections  # 保存供存档使用
 
-        total = len(detections)
-        categories = len(self._class_counter)
-        avg_conf = (self._total_confidence / max(self._detection_count, 1)) * 100
+        session_total = len(detections)
+        session_categories = len(self._class_counter)
+        session_avg_conf = (self._total_confidence / max(self._detection_count, 1)) * 100
         fps = self._total_fps
 
-        # 更新统计标签
-        self.stat_labels["count_label"].setText(f"{total} 个目标")
-        self.stat_labels["cat_label"].setText(f"{categories} 类")
-        self.stat_labels["conf_label"].setText(f"{avg_conf:.1f}%")
+        # 更新统计标签（检测页面右侧面板 — 显示本次会话的统计）
+        self.stat_labels["count_label"].setText(f"{session_total} 个目标")
+        self.stat_labels["cat_label"].setText(f"{session_categories} 类")
+        self.stat_labels["conf_label"].setText(f"{session_avg_conf:.1f}%")
         self.stat_labels["fps_label"].setText(f"{fps:.1f}" if fps > 0 else "--")
 
-        # 发射信号通知主窗口更新仪表盘 + 保存历史
-        self.detection_made.emit(total, categories, avg_conf, fps)
+        # 发射信号：原始检测数据 → AppWindow 累积统计 + 保存历史
+        self.detection_made.emit(detections, fps)
         if detections:
             self.results_ready.emit(detections)
+
+    # ── 标注图片存档（历史回看 + 专家评审素材） ──
 
     def _on_fps(self, fps):
         self._total_fps = fps

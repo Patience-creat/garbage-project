@@ -43,5 +43,3 @@ output/
 .DS_Store
 Thumbs.db
 
-# Keep base model
-!yolov8n.pt

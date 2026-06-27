@@ -275,6 +275,9 @@ class Sidebar(QWidget):
         ("仪表盘", "📊"),
         ("智能检测", "📷"),
         ("检测记录", "📋"),
+        # ── 分隔：比赛功能 ──
+        ("历史回看", "📸"),
+        ("专家评审", "🏆"),
     ]
 
     def __init__(self, parent=None):
@@ -326,6 +329,14 @@ class Sidebar(QWidget):
             btn.clicked.connect(lambda checked, idx=i: self._on_nav_click(idx))
             layout.addWidget(btn)
             self._buttons.append(btn)
+            # 在"检测记录"和"历史回看"之间加分隔线
+            if i == 2:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.HLine)
+                sep.setStyleSheet(f"background: {Color.BORDER}; max-height: 1px;")
+                sep.setFixedHeight(1)
+                layout.addWidget(sep)
+                layout.addSpacing(4)
 
         # 底部弹簧
         layout.addStretch(1)

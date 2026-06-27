@@ -67,7 +67,7 @@ class AppConfig:
     BASE_MODEL_PATH: str = "yolov8n.pt"
 
     # ── 检测 ──
-    CONF_THRESHOLD: float = float(os.getenv("CONF_THRESHOLD", "0.30"))
+    CONF_THRESHOLD: float = float(os.getenv("CONF_THRESHOLD", "0.20"))
     IO_U_THRESHOLD: float = 0.7
     MAX_DETECTIONS: int = 300
     CAMERA_ID: int = int(os.getenv("CAMERA_ID", "0"))
@@ -85,6 +85,11 @@ class AppConfig:
     RECORDS_DIR: str = os.getenv("RECORDS_DIR", "records")
     LOG_DIR: str = "logs"
     OUTPUT_DIR: str = "output"
+
+    # ── 历史回看 & 评审 ──
+    IMAGES_ARCHIVE_DIR: str = os.getenv("IMAGES_ARCHIVE_DIR", "records/images")
+    MAX_ARCHIVE_IMAGES: int = 20
+    REVIEW_RESULTS_FILE: str = "records/review_results.json"
 
     # ── 垃圾类别（与训练一致） ──
     CLASS_NAMES: List[str] = field(default_factory=lambda: [
